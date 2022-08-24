@@ -7,11 +7,19 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-sqlx = { version = "0.6", features = [ "runtime-actix-native-tls" , "sqlite" ] }
+# Web Framework
 actix-web = "4"
 actix-files = "0.6.2"
-serde = { version = "1.0", features = ["derive"] }
+
+# Utilities
 rand = "0.8.5"
+derive_more = "0.99.17"
+
+# Serializer
+serde = { version = "1.0", features = ["derive"] }
+
+# Database
+sqlx = { version = "0.6", features = [ "runtime-actix-native-tls" , "sqlite" ] }
 
 [build-dependencies]
 fs_extra = "1.2.0"

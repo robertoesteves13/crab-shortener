@@ -8,7 +8,7 @@ use std::env;
 fn main() {
     let mut pwd = env::current_dir().unwrap();
     pwd.push("view");
-    
+
     let options = CopyOptions::new();
 
     if cfg!(debug_assertions) {
