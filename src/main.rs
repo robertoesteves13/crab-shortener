@@ -62,7 +62,7 @@ struct UrlRequest {
 fn rand_string() -> String {
     thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(15)
+        .take(5)
         .map(char::from)
         .collect()
 }
