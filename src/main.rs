@@ -1,10 +1,12 @@
 use serde::Deserialize;
 
 use actix_files as fs;
-use actix_web::{get, post, web, App, HttpServer, Responder};
+use actix_web::{get, post, web, App, HttpServer, Responder, HttpResponse};
+use actix_web::http::{StatusCode};
+use actix_web::http::header;
+use actix_web::http::header::HeaderValue;
 
-use sqlx::sqlite::{SqlitePool};
-use sqlx::Executor;
+use sqlx::sqlite::SqlitePool;
 
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -43,7 +45,14 @@ async fn get_url(
     data: web::Data<ServiceState>,
 ) -> Result<impl Responder, ServiceError> {
     let mut conn = data.db_conn.acquire().await?;
-    Ok(query_db(&id.into_inner(), &mut conn).await?)
+
+    let string = query_db(&id.into_inner(), &mut conn).await?;
+
+    let mut res = HttpResponse::new(StatusCode::MOVED_PERMANENTLY);
+    let header = res.headers_mut();
+    header.append(header::LOCATION, HeaderValue::from_str(&string).unwrap());
+    
+    Ok(res)
 }
 
 #[post("/shorten-url")]
@@ -61,7 +70,7 @@ async fn shorten_url(
     insert_db(&req.url, &shortened, &mut conn).await?;
 
     if let Some(port) = data.port {
-        Ok(format!("http://{}:{}/{shortened}", data.domain, port))
+        Ok(format!("http://{}{}/{shortened}", data.domain, port))
     } else {
         Ok(format!("http://{}/{shortened}", data.domain))
     }
@@ -89,18 +98,7 @@ async fn main() -> std::io::Result<()> {
         }
     });
 
-    service_state
-        .db_conn
-        .execute(
-            "CREATE TABLE IF NOT EXISTS url(
-            id INTEGER PRIMARY KEY,
-            shortened TEXT NOT NULL,
-            url TEXT NOT NULL
-        )",
-        )
-        .await
-        .unwrap();
-
+    create_table(&mut service_state.db_conn.acquire().await.unwrap()).await;
     let port = service_state.port;
 
     HttpServer::new(move || {
