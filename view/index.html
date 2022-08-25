@@ -1,15 +1,164 @@
-<!DOCTYPE html>
-<html lang="en">
-  <style>
-    input {
-      display: block;
+<script type="module">
+  import { createApp } from 'https://unpkg.com/petite-vue?module';
+
+  createApp({
+    url: "",
+    url_shortened: "",
+    copy_message: "",
+    has_url: false,
+    has_error: false,
+    async send_url() {
+      let json = JSON.stringify({url: this.url});
+      
+      let req = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: json
+      };
+
+        let res = await fetch("shorten-url", req);
+      if (res.status == 200) {
+        this.url_shortened = await res.text();
+        this.has_error = false;
+      }
+      else {
+        this.url_shortened = "Error: " + await res.text();
+        this.copy_message = "Try again";
+
+        this.has_error = true;
+      }
+      this.has_url = true;
+    },
+    async clipboard() {
+      if (!this.has_error) {
+        navigator.clipboard.writeText(this.url_shortened);
+        this.copy_message = "Copied to clipboard!";
+      }
     }
-  </style>
-  <body>
-    <h1>Crab shortener!</h1>
-    <form action="/shorten-url" method="post">
-      <input type="url" id="url" name="url" placeholder="Insert the URL to be shortened">
-      <input type="submit" value="Shorten!">
-    </form>
-  </body>
-</html>
+  }).mount();
+</script>
+
+<header>
+  <h1>Crab shortener!</h1>
+</header>
+<div class="content">
+  <div class="form">
+    <h2>Oxidize your URL 🦀</h2>
+    <div class="input">
+      <input type="url" v-model="url" placeholder="Insert the URL to be shortened">
+      <button @click="send_url">Shorten!</button>
+    </div>
+  </div>
+  <div :class="{ hidden: !has_url }" class="result">
+    <h3 :class="{ hover: !has_error }" @click="clipboard">{{ url_shortened }}</h3>
+    <p>{{ copy_message }}</p>
+  </div>
+</div>
+
+<style>
+  body {
+    font-family: sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: fill;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  header {
+    display: flex;
+    justify-content: center;
+    padding-top: 1em;
+    margin: 0;
+    color: #FFF;
+    background: #FF4500;
+    border-bottom: solid 3em #222;
+  }
+
+  h1 {
+    font-size: 10em;
+    margin: 0.2em;;
+  }
+
+  h2 {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .form {
+    display: flex;
+    align-items: center;
+    flex-direction: column;
+    padding: 3em;
+  }
+
+  .input {
+    display: flex;
+    flex-grow: 2;
+    justify-content: center;
+    align-items: baseline;
+  }
+
+  .hidden {
+    visibility: hidden;
+  }
+
+  .result {
+    background-color: #FF4500;
+    color: #FFF;
+    padding: 1em;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+  }
+  
+  .result > p, h3 {
+    margin: 0;
+  }
+
+  input, button {
+    margin: 0.5em;
+    padding: 1em;
+    border-radius: 45px;
+    border-style: solid;
+    text-align: center;
+    border: none;
+    background-color: #DDD;
+    width: 7em;
+  }
+
+  button {
+    color: #FFF;
+    background-color: #222;
+    transition-duration: 0.1s;
+  }
+
+  button:hover {
+    color: #000;
+    background-color: #FF4500;
+  }
+
+  .hover:hover {
+    text-decoration: underline;
+  }
+
+  button:active {
+    color: #000;
+    background-color: #DDD;
+  }
+
+  input[type='url'] {
+    width: 20em;
+  }
+</style>

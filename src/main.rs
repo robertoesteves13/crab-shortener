@@ -1,68 +1,38 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use actix_files as fs;
-use actix_web::http::header::HeaderValue;
-use actix_web::http::{header, StatusCode};
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, post, web, App, HttpServer, Responder};
 
-use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqlitePool};
 use sqlx::Executor;
-use sqlx::Row;
 
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
 
-use derive_more::{Display, Error};
+use validator::Validate;
+
+mod errors;
+use errors::*;
+
+mod db;
+use db::*;
 
 struct ServiceState {
     db_conn: SqlitePool,
+    domain: String,
+    port: Option<u16>,
 }
 
-#[derive(Debug, Display, Error)]
-enum ServiceError {
-    #[display(fmt = "Database error")]
-    Database(sqlx::Error),
-
-    #[display(fmt = "Server error")]
-    Server(actix_web::Error),
-}
-
-impl actix_web::error::ResponseError for ServiceError {
-    fn error_response(&self) -> HttpResponse {
-        HttpResponse::build(self.status_code())
-            .insert_header(header::ContentType::html())
-            .body(self.to_string())
-    }
-
-    fn status_code(&self) -> StatusCode {
-        match *self {
-            ServiceError::Database(_) => StatusCode::SERVICE_UNAVAILABLE,
-            ServiceError::Server(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }
-}
-
-impl From<sqlx::Error> for ServiceError {
-    fn from(error: sqlx::Error) -> Self {
-        Self::Database(error)
-    }
-}
-
-impl From<actix_web::Error> for ServiceError {
-    fn from(error: actix_web::Error) -> Self {
-        Self::Server(error)
-    }
-}
-
-#[derive(Serialize, Deserialize)]
+#[derive(Deserialize, Validate)]
 struct UrlRequest {
+    #[validate(url)]
     url: String,
 }
 
 fn rand_string() -> String {
     thread_rng()
         .sample_iter(&Alphanumeric)
-        .take(15)
+        .take(6)
         .map(char::from)
         .collect()
 }
@@ -73,43 +43,28 @@ async fn get_url(
     data: web::Data<ServiceState>,
 ) -> Result<impl Responder, ServiceError> {
     let mut conn = data.db_conn.acquire().await?;
-    let url = sqlx::query("SELECT url FROM url WHERE id = ?")
-        .bind(id.into_inner())
-        .fetch_one(&mut *conn)
-        .await;
-
-    match url {
-        Ok(row) => {
-            let string: &str = row.get(0);
-
-            let mut res = HttpResponse::new(StatusCode::MOVED_PERMANENTLY);
-            let header = res.headers_mut();
-            header.append(header::LOCATION, HeaderValue::from_str(string).unwrap());
-
-            Ok(res)
-        }
-        Err(_err) => {
-            let res = HttpResponse::new(StatusCode::NOT_FOUND);
-            Ok(res)
-        }
-    }
+    Ok(query_db(&id.into_inner(), &mut conn).await?)
 }
 
 #[post("/shorten-url")]
 async fn shorten_url(
-    req: web::Form<UrlRequest>,
+    req: web::Json<UrlRequest>,
     data: web::Data<ServiceState>,
 ) -> Result<impl Responder, ServiceError> {
     let shortened = rand_string();
 
-    let mut conn = data.db_conn.acquire().await?;
-    sqlx::query("INSERT INTO url (id, url) VALUES ($1, $2)")
-        .bind(&shortened)
-        .bind(&req.url)
-        .execute(&mut *conn)
-        .await?;
+    if let Err(_err) = req.validate() {
+        return Err(ServiceError::User(UserError::InvalidUrl));
+    }
 
-    Ok(format!("http://localhost:8080/{shortened}"))
+    let mut conn = data.db_conn.acquire().await?;
+    insert_db(&req.url, &shortened, &mut conn).await?;
+
+    if let Some(port) = data.port {
+        Ok(format!("http://{}:{}/{shortened}", data.domain, port))
+    } else {
+        Ok(format!("http://{}/{shortened}", data.domain))
+    }
 }
 
 #[get("/")]
@@ -120,23 +75,33 @@ async fn index() -> Result<fs::NamedFile, std::io::Error> {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let service_state = web::Data::new(ServiceState {
-        db_conn: SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect("sqlite://urls.db?mode=rwc")
-            .await
-            .unwrap(),
+        db_conn: init_db().await,
+        domain: std::env::var("DOMAIN").unwrap_or("localhost".to_owned()),
+        port: match std::env::var("PORT") {
+            Ok(port) =>  {
+                if let Ok(num) = port.parse::<u16>() {
+                    Some(num)
+                } else {
+                    panic!("The port specified is not a number")
+                }
+            }
+            Err(_) => None
+        }
     });
 
     service_state
         .db_conn
         .execute(
             "CREATE TABLE IF NOT EXISTS url(
-            id TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY,
+            shortened TEXT NOT NULL,
             url TEXT NOT NULL
         )",
         )
         .await
         .unwrap();
+
+    let port = service_state.port;
 
     HttpServer::new(move || {
         App::new()
@@ -145,7 +110,7 @@ async fn main() -> std::io::Result<()> {
             .service(shorten_url)
             .service(get_url)
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(("127.0.0.1", port.unwrap_or(80)))?
     .run()
     .await
 }
