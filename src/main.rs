@@ -3,9 +3,6 @@ use axum::extract::{State, Path};
 use axum::http::StatusCode;
 use serde::Deserialize;
 
-use shuttle_axum::ShuttleAxum;
-use shuttle_runtime::CustomError;
-
 use axum::routing::{Router, get, post};
 use axum::response::IntoResponse;
 
@@ -92,5 +89,5 @@ async fn axum(
         .route("/:id", get(get_url))
         .with_state(Arc::new(ServiceState{ db_conn: pool }));
 
-    router.into()
+    Ok(router.into())
 }
