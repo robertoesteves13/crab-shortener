@@ -1,12 +1,17 @@
+use axum::Json;
+use axum::extract::{State, Path};
+use axum::http::StatusCode;
 use serde::Deserialize;
 
-use actix_files as fs;
-use actix_web::{get, post, web, App, HttpServer, Responder, HttpResponse};
-use actix_web::http::{StatusCode};
-use actix_web::http::header;
-use actix_web::http::header::HeaderValue;
+use shuttle_axum::ShuttleAxum;
+use shuttle_runtime::CustomError;
 
-use sqlx::sqlite::SqlitePool;
+use axum::routing::{Router, get, post};
+use axum::response::IntoResponse;
+
+use std::sync::Arc;
+
+use sqlx::postgres::PgPool;
 
 use rand::distributions::Alphanumeric;
 use rand::{thread_rng, Rng};
@@ -14,15 +19,12 @@ use rand::{thread_rng, Rng};
 use validator::Validate;
 
 mod errors;
-use errors::*;
 
 mod db;
 use db::*;
 
 struct ServiceState {
-    db_conn: SqlitePool,
-    domain: String,
-    port: Option<u16>,
+    db_conn: PgPool,
 }
 
 #[derive(Deserialize, Validate)]
@@ -39,76 +41,56 @@ fn rand_string() -> String {
         .collect()
 }
 
-#[get("/{id}")]
 async fn get_url(
-    id: web::Path<String>,
-    data: web::Data<ServiceState>,
-) -> Result<impl Responder, ServiceError> {
-    let mut conn = data.db_conn.acquire().await?;
+    Path(id): Path<String>,
+    State(state): State<Arc<ServiceState>>
+) -> impl IntoResponse {
+    let Ok(mut conn) = state.db_conn.acquire().await else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "The database is currently offline").into_response();
+    };
 
-    let string = query_db(&id.into_inner(), &mut conn).await?;
+    let Ok(string) = query_db(&id, &mut conn).await else {
+        return (StatusCode::NOT_FOUND, "This link isn't registered").into_response();
+    };
 
-    let mut res = HttpResponse::new(StatusCode::MOVED_PERMANENTLY);
-    let header = res.headers_mut();
-    header.append(header::LOCATION, HeaderValue::from_str(&string).unwrap());
-    
-    Ok(res)
+    (StatusCode::MOVED_PERMANENTLY, string).into_response()
 }
 
-#[post("/shorten-url")]
+#[axum::debug_handler]
 async fn shorten_url(
-    req: web::Json<UrlRequest>,
-    data: web::Data<ServiceState>,
-) -> Result<impl Responder, ServiceError> {
+    State(state): State<Arc<ServiceState>>,
+    Json(payload): Json<UrlRequest>
+) -> impl IntoResponse {
     let shortened = rand_string();
 
-    if let Err(_err) = req.validate() {
-        return Err(ServiceError::User(UserError::InvalidUrl));
-    }
+    let Ok(mut conn) = state.db_conn.acquire().await else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "The database is currently offline").into_response();
+    };
 
-    let mut conn = data.db_conn.acquire().await?;
-    insert_db(&req.url, &shortened, &mut conn).await?;
-
-    if let Some(port) = data.port {
-        Ok(format!("http://{}{}/{shortened}", data.domain, port))
+    if let Ok(_) = insert_db(&payload.url, &shortened, &mut conn).await {
+        (StatusCode::OK, shortened).into_response()
     } else {
-        Ok(format!("http://{}/{shortened}", data.domain))
+        (StatusCode::INTERNAL_SERVER_ERROR, "An unknown error ocurred on the server").into_response()
     }
+
+
 }
 
-#[get("/")]
-async fn index() -> Result<fs::NamedFile, std::io::Error> {
-    fs::NamedFile::open("view/index.html")
+async fn index() -> &'static str {
+    include_str!("../view/index.html")
 }
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    let service_state = web::Data::new(ServiceState {
-        db_conn: init_db().await,
-        domain: std::env::var("DOMAIN").unwrap_or("localhost".to_owned()),
-        port: match std::env::var("PORT") {
-            Ok(port) =>  {
-                if let Ok(num) = port.parse::<u16>() {
-                    Some(num)
-                } else {
-                    panic!("The port specified is not a number")
-                }
-            }
-            Err(_) => None
-        }
-    });
+#[shuttle_runtime::main]
+async fn axum(
+    #[shuttle_shared_db::Postgres] pool: PgPool
+) -> shuttle_axum::ShuttleAxum {
+    create_table(&mut pool.acquire().await.unwrap()).await;
 
-    create_table(&mut service_state.db_conn.acquire().await.unwrap()).await;
-    let port = service_state.port;
+    let router = Router::new()
+        .route("/", get(index))
+        .route("/shorten_url", post(shorten_url))
+        .route("/:id", get(get_url))
+        .with_state(Arc::new(ServiceState{ db_conn: pool }));
 
-    HttpServer::new(move || {
-        App::new()
-            .app_data(service_state.clone())
-            .service(index)
-            .service(shorten_url)
-            .service(get_url)
-    })
-    .bind(("127.0.0.1", port.unwrap_or(80)))?
-    .run()
-    .await
+    router.into()
 }
