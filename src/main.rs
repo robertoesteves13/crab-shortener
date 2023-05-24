@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 
 use axum::routing::{Router, get, post};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Html};
 
 use std::sync::Arc;
 
@@ -73,8 +73,8 @@ async fn shorten_url(
 
 }
 
-async fn index() -> &'static str {
-    include_str!("../view/index.html")
+async fn index() -> Html<&'static str> {
+    Html(include_str!("../view/index.html"))
 }
 
 #[shuttle_runtime::main]
