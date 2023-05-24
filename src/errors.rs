@@ -5,9 +5,6 @@ pub enum ServiceError {
     #[display(fmt = "Database error")]
     Database(sqlx::Error),
 
-    #[display(fmt = "Server error")]
-    Server(axum::Error),
-
     User(UserError)
 }
 
@@ -15,7 +12,4 @@ pub enum ServiceError {
 pub enum UserError {
     #[display(fmtr "This shortened link doesn't exist!")]
     NotFound,
-
-    #[display(fmt= "This is not a valid Url!")]
-    InvalidUrl
 }

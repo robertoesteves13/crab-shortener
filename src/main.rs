@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use serde::Deserialize;
 
 use axum::routing::{Router, get, post};
-use axum::response::{IntoResponse, Html};
+use axum::response::{IntoResponse, Html, Redirect};
 
 use std::sync::Arc;
 
@@ -38,6 +38,7 @@ fn rand_string() -> String {
         .collect()
 }
 
+#[axum::debug_handler]
 async fn get_url(
     Path(id): Path<String>,
     State(state): State<Arc<ServiceState>>
@@ -46,11 +47,11 @@ async fn get_url(
         return (StatusCode::SERVICE_UNAVAILABLE, "The database is currently offline").into_response();
     };
 
-    let Ok(string) = query_db(&id, &mut conn).await else {
-        return (StatusCode::NOT_FOUND, "This link isn't registered").into_response();
-    };
-
-    (StatusCode::MOVED_PERMANENTLY, string).into_response()
+    if let Ok(link) = query_db(&id, &mut conn).await {
+        Redirect::permanent(&link).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "This link isn't registered").into_response()
+    }
 }
 
 #[axum::debug_handler]
@@ -64,13 +65,12 @@ async fn shorten_url(
         return (StatusCode::SERVICE_UNAVAILABLE, "The database is currently offline").into_response();
     };
 
-    if let Ok(_) = insert_db(&payload.url, &shortened, &mut conn).await {
-        (StatusCode::OK, shortened).into_response()
-    } else {
+    if let Err(err) = insert_db(&payload.url, &shortened, &mut conn).await {
+        println!("{:?}", err);
         (StatusCode::INTERNAL_SERVER_ERROR, "An unknown error ocurred on the server").into_response()
+    } else {
+        (StatusCode::OK, shortened).into_response()
     }
-
-
 }
 
 async fn index() -> Html<&'static str> {
@@ -85,7 +85,7 @@ async fn axum(
 
     let router = Router::new()
         .route("/", get(index))
-        .route("/shorten_url", post(shorten_url))
+        .route("/shorten-url", post(shorten_url))
         .route("/:id", get(get_url))
         .with_state(Arc::new(ServiceState{ db_conn: pool }));
 

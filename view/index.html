@@ -18,9 +18,10 @@
         body: json
       };
 
-        let res = await fetch("shorten-url", req);
+      let res = await fetch("shorten-url", req);
       if (res.status == 200) {
-        this.url_shortened = await res.text();
+        let body = await res.text();
+        this.url_shortened = window.location.hostname + "/" + body;
         this.has_error = false;
       }
       else {

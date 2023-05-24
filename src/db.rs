@@ -1,27 +1,21 @@
 use sqlx::Executor;
 use sqlx::pool::PoolConnection;
-use sqlx::postgres::{PgPoolOptions, Postgres};
+use sqlx::postgres::Postgres;
 use sqlx::Row;
 
 use crate::errors::{ServiceError, UserError};
 
-pub async fn init_db() -> sqlx::Pool<Postgres> {
-    PgPoolOptions::new()
-        .max_connections(5)
-        .connect("sqlite://urls.db?mode=rwc")
-        .await
-        .unwrap()
-}
-
 pub async fn query_db(id: &str, conn: &mut PoolConnection<Postgres>) -> Result<String, ServiceError> {
-    let url = sqlx::query("SELECT url FROM url WHERE shortened = ?")
+    let url = sqlx::query("SELECT url FROM url WHERE shortened = $1")
         .bind(id)
         .fetch_one(&mut *conn)
         .await;
 
     match url {
         Err(err) => Err(ServiceError::Database(err)),
-        Ok(row) if row.is_empty() => Err(ServiceError::User(UserError::NotFound)),
+        Ok(row) if row.is_empty() => {
+            Err(ServiceError::User(UserError::NotFound))
+        }
         Ok(row) => Ok(row.get(0))
     }
 }
@@ -32,7 +26,7 @@ pub async fn insert_db(url: &str, shortened: &str, conn: &mut PoolConnection<Pos
         .bind(url)
         .execute(&mut *conn)
         .await;
-    
+
     match result {
         Ok(_code) => Ok(()),
         Err(err) => Err(ServiceError::Database(err))
@@ -43,7 +37,7 @@ pub async fn create_table(db_conn: &mut PoolConnection<Postgres>){
         db_conn
         .execute(
             "CREATE TABLE IF NOT EXISTS url(
-            id INTEGER PRIMARY KEY,
+            id SERIAL PRIMARY KEY,
             shortened TEXT NOT NULL,
             url TEXT NOT NULL
         )",
